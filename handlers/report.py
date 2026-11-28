@@ -1,75 +1,86 @@
-from aiogram import Router, F
-from aiogram.types import Message
+from html import escape
+
+from aiogram import Router, F, Bot
+from aiogram.filters import Command
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from database import add_report
 from config import ADMIN_IDS
-from aiogram import Bot
+from database import add_report
+from handlers.check import detect_type
+from keyboards.menu import main_menu
 
 router = Router()
 
 
 class ReportForm(StatesGroup):
     identifier = State()
-    scam_type = State()
+    category = State()
     description = State()
 
 
+@router.message(Command("report"))
 @router.message(F.text == "🚨 Сообщить о мошеннике")
 async def report_start(message: Message, state: FSMContext):
 
+    await state.clear()
     await state.set_state(ReportForm.identifier)
 
     await message.answer(
-        "🚨 <b>НОВАЯ ЖАЛОБА</b>\n\n"
-        "Отправь никнейм, Telegram ID, "
-        "телефон или почту подозреваемого.",
-        parse_mode="HTML"
+        "🚨 <b>Создание жалобы</b>\n\n"
+        "Отправь username, Telegram ID, телефон или email.\n\n"
+        "Не отправляй пароли и коды подтверждения."
     )
 
 
 @router.message(ReportForm.identifier)
 async def report_identifier(message: Message, state: FSMContext):
 
-    from handlers.check import detect_type
+    kind, value = detect_type(message.text or "")
 
-    identifier_type, identifier = detect_type(message.text)
-
-    if not identifier_type:
-        await message.answer("❌ Неверный формат. Попробуй ещё раз.")
+    if not kind:
+        await message.answer(
+            "❌ Неверный формат. Попробуй ещё раз."
+        )
         return
 
     await state.update_data(
-        target_type=identifier_type,
-        target_value=identifier
+        target_type=kind,
+        target_value=value
     )
 
-    await state.set_state(ReportForm.scam_type)
+    await state.set_state(ReportForm.category)
 
     await message.answer(
-        "Какой вид мошенничества?\n\n"
-        "Например:\n"
-        "• Мошенничество с подарками\n"
-        "• Фишинг\n"
-        "• Криптовалюта\n"
-        "• Обман при продаже\n"
-        "• Другое"
+        "Теперь укажи категорию мошенничества.\n\n"
+        "Например: фишинг, продажа, криптовалюта, "
+        "вымогательство или другое."
     )
 
 
-@router.message(ReportForm.scam_type)
-async def report_type(message: Message, state: FSMContext):
+@router.message(ReportForm.category)
+async def report_category(message: Message, state: FSMContext):
 
-    await state.update_data(
-        scam_type=message.text
-    )
+    category = (message.text or "").strip()
+
+    if len(category) < 2 or len(category) > 80:
+        await message.answer(
+            "Категория должна содержать от 2 до 80 символов."
+        )
+        return
+
+    await state.update_data(scam_type=category)
 
     await state.set_state(ReportForm.description)
 
     await message.answer(
-        "Опиши подробно, что произошло.\n\n"
-        "Расскажи, как именно тебя пытались обмануть."
+        "Опиши ситуацию.\n\n"
+        "Минимум 10 символов, максимум 2000."
     )
 
 
@@ -80,38 +91,80 @@ async def report_description(
     bot: Bot
 ):
 
-    await state.update_data(
-        description=message.text
-    )
+    description = (message.text or "").strip()
+
+    if len(description) < 10 or len(description) > 2000:
+        await message.answer(
+            "Описание должно содержать от 10 до 2000 символов."
+        )
+        return
 
     data = await state.get_data()
 
-    data["reporter_id"] = message.from_user.id
-    data["status"] = "pending"
-    data["evidence"] = []
+    report_data = {
+        "reporter_id": message.from_user.id,
+        "target_type": data["target_type"],
+        "target_value": data["target_value"],
+        "scam_type": data["scam_type"],
+        "description": description,
+        "evidence": [],
+        "status": "pending"
+    }
 
-    await add_report(data)
+    try:
+        saved = await add_report(report_data)
+
+    except Exception:
+        await message.answer(
+            "⚠️ Не удалось сохранить жалобу. "
+            "Попробуй позже."
+        )
+        raise
 
     await state.clear()
 
     await message.answer(
-        "✅ <b>ЖАЛОБА ОТПРАВЛЕНА!</b>\n\n"
-        "Она поступила администрации "
-        "ATKA A-Scam.\n\n"
-        "Статус: 🟡 На проверке.",
-        parse_mode="HTML"
+        "✅ Жалоба успешно отправлена!\n\n"
+        "Она ожидает проверки администратора.",
+        reply_markup=main_menu()
+    )
+
+    if not saved:
+        return
+
+    report_id = saved["id"]
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Одобрить",
+                    callback_data=f"report:approve:{report_id}"
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отклонить",
+                    callback_data=f"report:reject:{report_id}"
+                )
+            ]
+        ]
+    )
+
+    admin_text = (
+        "🚨 <b>НОВАЯ ЖАЛОБА</b>\n\n"
+        f"Номер: <code>{report_id}</code>\n"
+        f"Объект: <code>{escape(data['target_value'])}</code>\n"
+        f"Тип: {escape(data['target_type'])}\n"
+        f"Категория: {escape(data['scam_type'])}\n"
+        f"Описание: {escape(description)}\n"
+        f"Отправитель: <code>{message.from_user.id}</code>"
     )
 
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(
                 admin_id,
-                "🚨 <b>НОВАЯ ЖАЛОБА</b>\n\n"
-                f"Объект: {data['target_value']}\n"
-                f"Тип: {data['scam_type']}\n"
-                f"Описание: {data['description']}\n"
-                f"Отправитель ID: {data['reporter_id']}",
-                parse_mode="HTML"
+                admin_text,
+                reply_markup=keyboard
             )
         except Exception:
             pass
