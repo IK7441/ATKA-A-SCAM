@@ -13,65 +13,52 @@ db = create_client(
 )
 
 
-async def run_query(query):
+async def execute(query):
     return await asyncio.to_thread(query.execute)
 
 
+# Регистрация пользователя
+
 async def register_user(user):
-    return await run_query(
-        db.table("users").upsert({
-            "telegram_id": user.id,
-            "username": user.username
-        }, on_conflict="telegram_id")
+    return await execute(
+        db.table("users").upsert(
+            {
+                "telegram_id": user.id,
+                "username": user.username
+            },
+            on_conflict="telegram_id"
+        )
     )
 
 
-async def check_user(identifier_type, identifier):
-    result = await run_query(
+# Проверка пользователя
+
+async def check_user(identifier_type, identifier_value):
+    result = await execute(
         db.table("scammers")
         .select("*")
         .eq("identifier_type", identifier_type)
-        .eq("identifier_value", identifier)
+        .eq("identifier_value", identifier_value)
         .limit(1)
     )
 
-    return result.data
+    return result.data or []
 
+
+# Добавление жалобы
 
 async def add_report(data):
-    return await run_query(
+    result = await execute(
         db.table("reports").insert(data)
     )
 
-
-async def approve_report(report):
-    await run_query(
-        db.table("scammers").upsert({
-            "identifier_type": report["target_type"],
-            "identifier_value": report["target_value"],
-            "scam_type": report["scam_type"],
-            "description": report["description"],
-            "report_count": 1
-        }, on_conflict="identifier_type,identifier_value")
-    )
-
-    await run_query(
-        db.table("reports")
-        .update({"status": "approved"})
-        .eq("id", report["id"])
-    )
+    return result.data[0] if result.data else None
 
 
-async def reject_report(report_id):
-    return await run_query(
-        db.table("reports")
-        .update({"status": "rejected"})
-        .eq("id", report_id)
-    )
-
+# Получение жалобы
 
 async def get_report(report_id):
-    result = await run_query(
+    result = await execute(
         db.table("reports")
         .select("*")
         .eq("id", report_id)
@@ -81,34 +68,108 @@ async def get_report(report_id):
     return result.data[0] if result.data else None
 
 
-async def get_statistics():
-    scammers = await run_query(
-        db.table("scammers").select("id")
-    )
+# Ожидающие жалобы
 
-    reports = await run_query(
-        db.table("reports").select("id")
-    )
-
-    pending = await run_query(
+async def get_pending_reports(limit=10):
+    result = await execute(
         db.table("reports")
-        .select("id")
+        .select("*")
+        .eq("status", "pending")
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+
+    return result.data or []
+
+
+# Обновление статуса жалобы
+
+async def set_report_status(report_id, status):
+    return await execute(
+        db.table("reports")
+        .update({"status": status})
+        .eq("id", report_id)
+    )
+
+
+# Одобрение жалобы
+
+async def approve_report(report):
+    existing = await check_user(
+        report["target_type"],
+        report["target_value"]
+    )
+
+    if existing:
+        row = existing[0]
+
+        await execute(
+            db.table("scammers")
+            .update({
+                "report_count": int(
+                    row.get("report_count") or 0
+                ) + 1
+            })
+            .eq("id", row["id"])
+        )
+
+    else:
+        await execute(
+            db.table("scammers").insert({
+                "identifier_type": report["target_type"],
+                "identifier_value": report["target_value"],
+                "scam_type": report["scam_type"],
+                "description": report["description"],
+                "report_count": 1
+            })
+        )
+
+    await set_report_status(report["id"], "approved")
+
+
+# Отклонение жалобы
+
+async def reject_report(report_id):
+    return await set_report_status(
+        report_id,
+        "rejected"
+    )
+
+
+# Статистика
+
+async def get_statistics():
+    scammers = await execute(
+        db.table("scammers")
+        .select("id", count="exact")
+    )
+
+    reports = await execute(
+        db.table("reports")
+        .select("id", count="exact")
+    )
+
+    pending = await execute(
+        db.table("reports")
+        .select("id", count="exact")
         .eq("status", "pending")
     )
 
     return {
-        "scammers": len(scammers.data),
-        "reports": len(reports.data),
-        "pending": len(pending.data)
+        "scammers": scammers.count or 0,
+        "reports": reports.count or 0,
+        "pending": pending.count or 0
     }
 
 
-async def get_latest():
-    result = await run_query(
+# Последние записи
+
+async def get_latest(limit=10):
+    result = await execute(
         db.table("scammers")
         .select("*")
         .order("added_at", desc=True)
-        .limit(10)
+        .limit(limit)
     )
 
-    return result.data
+    return result.data or []
