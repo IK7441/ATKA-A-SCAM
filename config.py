@@ -1,27 +1,34 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 
 SUPABASE_SERVICE_ROLE_KEY = os.getenv(
-    "SUPABASE_SERVICE_ROLE_KEY"
-)
+    "SUPABASE_SERVICE_ROLE_KEY", ""
+).strip()
 
-ADMIN_IDS = [7313596236]
+ADMIN_IDS = {
     int(x.strip())
-    for x in os.getenv("ADMIN_IDS", "").split(",")
+    for x in os.getenv("ADMIN_IDS", "7313596236").split(",")
     if x.strip().isdigit()
-]
+}
 
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is missing")
 
-if not SUPABASE_URL:
-    raise ValueError("SUPABASE_URL is missing")
+def validate_config():
+    missing = []
 
-if not SUPABASE_SERVICE_ROLE_KEY:
-    raise ValueError("SUPABASE_SERVICE_ROLE_KEY is missing")
+    if not BOT_TOKEN:
+        missing.append("BOT_TOKEN")
+
+    if not SUPABASE_URL:
+        missing.append("SUPABASE_URL")
+
+    if not SUPABASE_SERVICE_ROLE_KEY:
+        missing.append("SUPABASE_SERVICE_ROLE_KEY")
+
+    if missing:
+        raise RuntimeError(
+            "Не заданы переменные окружения: "
+            + ", ".join(missing)
+        )
