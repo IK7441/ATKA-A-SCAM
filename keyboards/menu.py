@@ -5,7 +5,6 @@ from aiogram.types import (
 
 
 def main_menu():
-
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -19,16 +18,32 @@ def main_menu():
                 )
             ],
             [
+                KeyboardButton(text="📊 Статистика"),
+                KeyboardButton(text="🆕 Последние записи")
+            ],
+            [
+                KeyboardButton(text="ℹ️ О проекте")
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+
+def admin_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
                 KeyboardButton(
-                    text="📊 Статистика"
-                ),
-                KeyboardButton(
-                    text="🆕 Последние скамеры"
+                    text="📥 Ожидают проверки"
                 )
             ],
             [
+                KeyboardButton(text="📊 Статистика"),
+                KeyboardButton(text="🆕 Последние записи")
+            ],
+            [
                 KeyboardButton(
-                    text="ℹ️ О проекте"
+                    text="⬅️ Главное меню"
                 )
             ]
         ],
