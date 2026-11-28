@@ -29,6 +29,5 @@ def validate_config():
 
     if missing:
         raise RuntimeError(
-            "Не заданы переменные окружения: "
-            + ", ".join(missing)
+            "Не заданы переменные: " + ", ".join(missing)
         )
